@@ -14,3 +14,14 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+
+## Zen Master Level
+
+Zen Master uses the full board with maze-like obstacle walls that create narrow
+lanes and chambers.
+
+Rules:
+- Move through corridors and avoid obstacle walls.
+- Through-walls wrapping is always disabled in Zen Master.
+- Food spawns only on reachable open cells.
+- Collision with wall, obstacle, or snake body ends the run.

@@ -1,4 +1,4 @@
-package com.antigravity.flutter_snake_game
+package com.antigravity.ouro
 
 import io.flutter.embedding.android.FlutterActivity
 
