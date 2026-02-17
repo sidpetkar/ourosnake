@@ -219,6 +219,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                                     gridHeight: gameProvider.height,
                                     snakeTickSpeedMs: gameProvider.currentTickSpeedMs,
                                     foodVisible: gameProvider.foodVisible,
+                                    isGameOver: gameProvider.status == GameStatus.gameOver,
                                     animationValue: _animationController.value,
                                     animationCycleMs:
                                         _animationController.duration!.inMilliseconds,

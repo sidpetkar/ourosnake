@@ -42,7 +42,7 @@ class GameProvider extends ChangeNotifier {
   static const int speedIntermediate = 150;
   static const int speedAdvanced = 100;
   static const int speedLightsOut = 160; // Special mode
-  static const double _minSwipeDelta = 2.0;
+  static const double _minSwipeDelta = 7.0;
 
   // State
   List<GamePoint> _snake = [];
@@ -432,7 +432,7 @@ class GameProvider extends ChangeNotifier {
     // Debounce rapid swipes - keep responsive while preventing accidental doubles.
     final now = DateTime.now();
     if (_lastSwipeTime != null &&
-        now.difference(_lastSwipeTime!).inMilliseconds < 25) {
+        now.difference(_lastSwipeTime!).inMilliseconds < 50) {
       return;
     }
 
