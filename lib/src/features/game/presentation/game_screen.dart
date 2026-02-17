@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import 'package:flutter_snake_game/src/features/game/logic/game_provider.dart';
@@ -23,6 +24,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   bool _isHomeHolding = false;
   int _homeLevelIndex = 0;
   double _homeSlideWidth = 1.0;
+  final FocusNode _focusNode = FocusNode();
 
   @override
   void initState() {
@@ -36,9 +38,42 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _focusNode.dispose();
     _animationController.dispose();
     _homeSlideController?.dispose();
     super.dispose();
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final gameProvider = Provider.of<GameProvider>(context, listen: false);
+
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+      gameProvider.setDirection(Direction.up);
+      return KeyEventResult.handled;
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      gameProvider.setDirection(Direction.down);
+      return KeyEventResult.handled;
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+      gameProvider.setDirection(Direction.left);
+      return KeyEventResult.handled;
+    } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+      gameProvider.setDirection(Direction.right);
+      return KeyEventResult.handled;
+    } else if (event.logicalKey == LogicalKeyboardKey.space) {
+      if (gameProvider.status == GameStatus.playing) {
+        gameProvider.pauseGame();
+      } else if (gameProvider.status == GameStatus.paused) {
+        gameProvider.pauseGame();
+      } else if (gameProvider.status == GameStatus.gameOver ||
+                 gameProvider.status == GameStatus.initial) {
+        gameProvider.startGame();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   AnimationController _ensureHomeSlideController() {
@@ -82,129 +117,142 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     // Calculate aspect ratio based on grid dimensions (20/30 = 0.66)
     final double aspectRatio = GameProvider.gridWidth / GameProvider.gridHeight;
 
-    return Scaffold(
-      resizeToAvoidBottomInset: false,
-      backgroundColor: isLightsOut
-          ? AppTheme.lightsOutBackground
-          : AppTheme.creamBackground,
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onPanUpdate: (details) {
-          gameProvider.handleSwipeUpdate(details);
-        },
-        onPanEnd: (details) {
-          gameProvider.handleSwipe(details);
-        },
-        child: SafeArea(
-          bottom: true,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final totalH = constraints.maxHeight;
-              final totalW = constraints.maxWidth;
+    return Focus(
+      focusNode: _focusNode,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: Scaffold(
+        resizeToAvoidBottomInset: false,
+        backgroundColor: isLightsOut
+            ? AppTheme.lightsOutBackground
+            : AppTheme.creamBackground,
+        body: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _focusNode.requestFocus(),
+          onPanUpdate: (details) {
+            gameProvider.handleSwipeUpdate(details);
+          },
+          onPanEnd: (details) {
+            gameProvider.handleSwipe(details);
+          },
+          child: SafeArea(
+            bottom: true,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final totalH = constraints.maxHeight;
+                final totalW = constraints.maxWidth;
 
-              // Reserve space for header (~12%) and footer (~8%)
-              final headerH = totalH * 0.12;
-              final footerH = totalH * 0.08;
-              final boardMaxH = totalH - headerH - footerH;
+                // Reserve space for header (~12%) and footer (~8%)
+                final headerH = totalH * 0.12;
+                final footerH = totalH * 0.08;
+                final boardMaxH = totalH - headerH - footerH;
 
-              // Compute board width: fit by height first, then clamp to 90% of width
-              final boardWidthFromHeight = boardMaxH * aspectRatio;
-              final boardWidthFromWidth = totalW * 0.90;
-              final boardW = boardWidthFromHeight < boardWidthFromWidth
-                  ? boardWidthFromHeight
-                  : boardWidthFromWidth;
-              final boardH = boardW / aspectRatio;
+                // Compute board width: fit by height first, then clamp to 90% of width
+                final boardWidthFromHeight = boardMaxH * aspectRatio;
+                final boardWidthFromWidth = totalW * 0.90;
+                final boardW = boardWidthFromHeight < boardWidthFromWidth
+                    ? boardWidthFromHeight
+                    : boardWidthFromWidth;
+                final boardH = boardW / aspectRatio;
 
-              return SizedBox(
-                height: totalH,
-                child: Column(
-                  children: [
-                    SizedBox(height: totalH * 0.02),
-                    // --- HEADER (Scores) ---
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildScoreBlock(
-                            context,
-                            "SCORE",
-                            gameProvider.score,
-                            true,
-                            textColor: AppTheme.foodOrange,
-                            labelColor: isLightsOut
-                                ? AppTheme.lightsOutText.withValues(alpha: 0.75)
-                                : null,
-                          ),
-                          _buildScoreBlock(
-                            context,
-                            "HIGH",
-                            gameProvider.highScore,
-                            false,
-                            textColor: isLightsOut
-                                ? AppTheme.lightsOutText
-                                : AppTheme.darkText,
-                            labelColor: isLightsOut
-                                ? AppTheme.lightsOutText.withValues(alpha: 0.70)
-                                : null,
-                          ),
-                        ],
-                      ),
-                    ),
-
-                    const Spacer(),
-
-                    // --- GAME BOARD ---
-                    Center(
-                      child: SizedBox(
-                        width: boardW,
-                        height: boardH,
-                        child: Container(
-                          color: isLightsOut
-                              ? AppTheme.lightsOutBoardBackground
-                              : AppTheme.creamBackground,
-                          child: AnimatedBuilder(
-                            animation: _animationController,
-                            builder: (context, child) {
-                              return CustomPaint(
-                                painter: SnakePainter(
-                                  snake: gameProvider.snake,
-                                  obstacles: gameProvider.obstacles,
-                                  playableCells: gameProvider.playableCells,
-                                  food: gameProvider.food,
-                                  direction: gameProvider.direction,
-                                  currentLevel: gameProvider.currentLevel,
-                                  gridWidth: gameProvider.width,
-                                  gridHeight: gameProvider.height,
-                                  snakeTickSpeedMs: gameProvider.currentTickSpeedMs,
-                                  foodVisible: gameProvider.foodVisible,
-                                  animationValue: _animationController.value,
-                                  animationCycleMs:
-                                      _animationController.duration!.inMilliseconds,
-                                ),
-                              );
-                            },
+                return SizedBox(
+                  height: totalH,
+                  child: Column(
+                    children: [
+                      SizedBox(height: totalH * 0.02),
+                      // --- HEADER (Scores) aligned to grid width ---
+                      Center(
+                        child: SizedBox(
+                          width: boardW,
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildScoreBlock(
+                                context,
+                                "SCORE",
+                                gameProvider.score,
+                                true,
+                                textColor: AppTheme.foodOrange,
+                                labelColor: isLightsOut
+                                    ? AppTheme.lightsOutText.withValues(alpha: 0.75)
+                                    : null,
+                              ),
+                              _buildScoreBlock(
+                                context,
+                                "HIGH",
+                                gameProvider.highScore,
+                                false,
+                                textColor: isLightsOut
+                                    ? AppTheme.lightsOutText
+                                    : AppTheme.darkText,
+                                labelColor: isLightsOut
+                                    ? AppTheme.lightsOutText.withValues(alpha: 0.70)
+                                    : null,
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    ),
 
-                    const Spacer(),
+                      const Spacer(),
 
-                    // --- FOOTER (Buttons) ---
-                    Padding(
-                      padding: EdgeInsets.fromLTRB(32, 0, 32, totalH * 0.025),
-                      child: _buildFooter(
-                        context,
-                        gameProvider,
-                        isLightsOut: isLightsOut,
+                      // --- GAME BOARD ---
+                      Center(
+                        child: SizedBox(
+                          width: boardW,
+                          height: boardH,
+                          child: Container(
+                            color: isLightsOut
+                                ? AppTheme.lightsOutBoardBackground
+                                : AppTheme.creamBackground,
+                            child: AnimatedBuilder(
+                              animation: _animationController,
+                              builder: (context, child) {
+                                return CustomPaint(
+                                  painter: SnakePainter(
+                                    snake: gameProvider.snake,
+                                    obstacles: gameProvider.obstacles,
+                                    playableCells: gameProvider.playableCells,
+                                    food: gameProvider.food,
+                                    direction: gameProvider.direction,
+                                    currentLevel: gameProvider.currentLevel,
+                                    gridWidth: gameProvider.width,
+                                    gridHeight: gameProvider.height,
+                                    snakeTickSpeedMs: gameProvider.currentTickSpeedMs,
+                                    foodVisible: gameProvider.foodVisible,
+                                    animationValue: _animationController.value,
+                                    animationCycleMs:
+                                        _animationController.duration!.inMilliseconds,
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              );
-            },
+
+                      const Spacer(),
+
+                      // --- FOOTER (Buttons) aligned to grid width ---
+                      Center(
+                        child: SizedBox(
+                          width: boardW,
+                          child: Padding(
+                            padding: EdgeInsets.only(bottom: totalH * 0.02),
+                            child: _buildFooter(
+                              context,
+                              gameProvider,
+                              isLightsOut: isLightsOut,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
           ),
         ),
       ),
