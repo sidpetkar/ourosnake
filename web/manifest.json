@@ -1,11 +1,11 @@
 {
-    "name": "flutter_snake_game",
-    "short_name": "flutter_snake_game",
+    "name": "OuroSnake",
+    "short_name": "OuroSnake",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#fafafa",
-    "theme_color": "#fafafa",
-    "description": "A new Flutter project.",
+    "background_color": "#F5F5F0",
+    "theme_color": "#F5F5F0",
+    "description": "A minimalist snake game",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

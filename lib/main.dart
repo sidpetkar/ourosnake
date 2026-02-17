@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,11 +8,12 @@ import 'src/features/game/presentation/game_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Pin to portrait for phone layout
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
+  if (!kIsWeb) {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+  }
   runApp(const MyApp());
 }
 
@@ -25,10 +27,18 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => GameProvider()),
       ],
       child: MaterialApp(
-        title: 'Snake',
+        title: 'OuroSnake',
         debugShowCheckedModeBanner: false,
         theme: AppTheme.theme,
         home: const GameScreen(),
+        builder: (context, child) {
+          return MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.noScaling,
+            ),
+            child: child!,
+          );
+        },
       ),
     );
   }

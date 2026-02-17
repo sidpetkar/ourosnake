@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -7,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration/vibration.dart';
 
 enum GameStatus { initial, playing, paused, gameOver }
+
 enum GameLevel { beginner, intermediate, advanced, lightsOut }
+
 enum Direction { up, down, left, right }
 
 class GamePoint {
@@ -25,7 +28,7 @@ class GamePoint {
 
   @override
   int get hashCode => x.hashCode ^ y.hashCode;
-  
+
   @override
   String toString() => '($x, $y)';
 }
@@ -38,7 +41,7 @@ class GameProvider extends ChangeNotifier {
   static const int speedBeginner = 150;
   static const int speedIntermediate = 150;
   static const int speedAdvanced = 100;
-  static const int speedLightsOut = 120; // Special mode
+  static const int speedLightsOut = 160; // Special mode
   static const double _minSwipeDelta = 2.0;
 
   // State
@@ -62,16 +65,20 @@ class GameProvider extends ChangeNotifier {
   bool _wrapWallsEnabled = true;
   GameLevel _currentLevel = GameLevel.beginner;
   Timer? _gameTimer;
+  Timer? _lightsOutFoodTimer;
   // Simple pool of players for SFX.
   final List<AudioPlayer> _sfxPlayers = [];
   int _currentSfxPlayerIndex = 0;
   static const int _sfxPoolSize = 5;
+  final Random _random = Random();
 
   DateTime? _lastSwipeTime;
   bool _hasVibrator = false;
   int? _lastIntermediateShapeId;
+  int? _lastLightsOutShapeId;
   int? _lastZenPatternId;
   int _currentTickSpeedMs = speedBeginner;
+  bool _lightsOutFoodVisible = true;
 
   // Getters
   List<GamePoint> get snake => _snake;
@@ -83,9 +90,12 @@ class GameProvider extends ChangeNotifier {
   int get highScore => _highScores[_currentLevel] ?? 0;
   int get width => gridWidth;
   int get height => gridHeight;
+  int get currentTickSpeedMs => _currentTickSpeedMs;
   bool get soundEnabled => _soundEnabled;
   bool get vibrationEnabled => _vibrationEnabled;
   bool get wrapWallsEnabled => _wrapWallsEnabled;
+  bool get foodVisible =>
+      _currentLevel == GameLevel.lightsOut ? _lightsOutFoodVisible : true;
 
   Direction get direction => _direction;
   GameLevel get currentLevel => _currentLevel;
@@ -107,7 +117,15 @@ class GameProvider extends ChangeNotifier {
   }
 
   void _checkVibrator() async {
-    _hasVibrator = await Vibration.hasVibrator();
+    try {
+      if (kIsWeb) {
+        _hasVibrator = false;
+      } else {
+        _hasVibrator = await Vibration.hasVibrator();
+      }
+    } catch (_) {
+      _hasVibrator = false;
+    }
   }
 
   String _levelPrefKey(GameLevel level) => 'high_score_${level.name}';
@@ -165,23 +183,26 @@ class GameProvider extends ChangeNotifier {
   }
 
   void startGame() {
-    final random = Random();
     _score = 0;
     _status = GameStatus.playing;
-    
+
     _generateLevel(_currentLevel);
-    final (spawnSnake, spawnDirection) = _buildInitialSpawn(random);
+    final (spawnSnake, spawnDirection) = _buildInitialSpawn(_random);
     _snake = spawnSnake;
     _direction = spawnDirection;
     _nextDirection = null;
-    
+
     final bool foodCollides =
-        !_isPlayable(_food) || _snake.contains(_food) || _obstacles.contains(_food) || !_isFoodReachableFromSnake(_food);
-    
+        !_isPlayable(_food) ||
+        _snake.contains(_food) ||
+        _obstacles.contains(_food) ||
+        !_isFoodReachableFromSnake(_food);
+
     if (foodCollides) {
       _generateFood();
     }
-    
+    _startLightsOutFoodCycleIfNeeded();
+
     _startTimer();
     _triggerVibration(duration: 100, amplitude: 255);
     _playSound('start.wav'); // Optional if you have it
@@ -192,12 +213,14 @@ class GameProvider extends ChangeNotifier {
     if (_status == GameStatus.playing) {
       _status = GameStatus.paused;
       _gameTimer?.cancel();
+      _cancelLightsOutFoodTimer();
       _triggerVibration(duration: 50, amplitude: 128);
       _playSound('pause.wav');
       notifyListeners();
     } else if (_status == GameStatus.paused) {
       _status = GameStatus.playing;
       _startTimer();
+      _startLightsOutFoodCycleIfNeeded();
       _triggerVibration(duration: 50, amplitude: 128);
       _playSound('pause.wav');
       notifyListeners();
@@ -205,8 +228,10 @@ class GameProvider extends ChangeNotifier {
   }
 
   void endGame() {
-    _status = GameStatus.initial; // Go back to start screen effectively, or reset
+    _status =
+        GameStatus.initial; // Go back to start screen effectively, or reset
     _gameTimer?.cancel();
+    _cancelLightsOutFoodTimer();
 
     _snake = []; // clear snake
     _triggerVibration(duration: 50, amplitude: 100);
@@ -216,6 +241,7 @@ class GameProvider extends ChangeNotifier {
   void _gameOver() {
     _status = GameStatus.gameOver;
     _gameTimer?.cancel();
+    _cancelLightsOutFoodTimer();
     _saveHighScore();
     _triggerVibration(duration: 200, amplitude: 255);
 
@@ -227,13 +253,21 @@ class GameProvider extends ChangeNotifier {
     if (!_vibrationEnabled) {
       return;
     }
-    if (_hasVibrator) {
-      // Fire and forget, don't await
-      Vibration.vibrate(duration: duration, amplitude: amplitude).catchError((e) {
-         HapticFeedback.mediumImpact();
-      });
-    } else {
-      HapticFeedback.mediumImpact();
+    if (kIsWeb) {
+      return;
+    }
+    try {
+      if (_hasVibrator) {
+        Vibration.vibrate(duration: duration, amplitude: amplitude).catchError((
+          e,
+        ) {
+          HapticFeedback.mediumImpact();
+        });
+      } else {
+        HapticFeedback.mediumImpact();
+      }
+    } catch (_) {
+      // Silently fail on platforms that don't support vibration
     }
   }
 
@@ -251,6 +285,12 @@ class GameProvider extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    if (level == GameLevel.lightsOut) {
+      final random = Random();
+      _setPlayableCells(_buildLightsOutPlayableShape(random));
+      notifyListeners();
+      return;
+    }
     if (level != GameLevel.intermediate) {
       _setPlayableCells(_buildFullPlayableCells());
       notifyListeners();
@@ -259,7 +299,8 @@ class GameProvider extends ChangeNotifier {
 
     final random = Random();
     int shapePattern = random.nextInt(6);
-    if (_lastIntermediateShapeId != null && shapePattern == _lastIntermediateShapeId) {
+    if (_lastIntermediateShapeId != null &&
+        shapePattern == _lastIntermediateShapeId) {
       shapePattern = (shapePattern + 1 + random.nextInt(5)) % 6;
     }
     _lastIntermediateShapeId = shapePattern;
@@ -272,14 +313,15 @@ class GameProvider extends ChangeNotifier {
     if (!_soundEnabled && !force) {
       return;
     }
-    
+
     if (_sfxPlayers.isEmpty) return;
 
     try {
       // Round-robin selection: always pick next player, stopping it if busy.
       // This ensures the latest sound plays immediately.
       final player = _sfxPlayers[_currentSfxPlayerIndex];
-      _currentSfxPlayerIndex = (_currentSfxPlayerIndex + 1) % _sfxPlayers.length;
+      _currentSfxPlayerIndex =
+          (_currentSfxPlayerIndex + 1) % _sfxPlayers.length;
 
       await player.stop();
       await player.play(AssetSource('sounds/$fileName'));
@@ -291,7 +333,9 @@ class GameProvider extends ChangeNotifier {
   void setLevel(GameLevel level) {
     if (_status == GameStatus.initial) {
       _currentLevel = level;
-      HapticFeedback.selectionClick();
+      if (!kIsWeb) {
+        HapticFeedback.selectionClick();
+      }
       notifyListeners();
     }
   }
@@ -299,7 +343,9 @@ class GameProvider extends ChangeNotifier {
   void _startTimer() {
     _gameTimer?.cancel();
     _currentTickSpeedMs = _computeTickSpeed(_score);
-    _gameTimer = Timer.periodic(Duration(milliseconds: _currentTickSpeedMs), (timer) {
+    _gameTimer = Timer.periodic(Duration(milliseconds: _currentTickSpeedMs), (
+      timer,
+    ) {
       _tick();
     });
   }
@@ -325,7 +371,6 @@ class GameProvider extends ChangeNotifier {
   }
 
   void _generateFood({bool notify = true}) {
-    final random = Random();
     final Set<GamePoint> blocked = _obstacles.toSet()..addAll(_snake);
 
     // One BFS from snake head to find all reachable cells. This avoids an expensive
@@ -340,7 +385,9 @@ class GameProvider extends ChangeNotifier {
         final GamePoint current = queue[index++];
         for (final dir in Direction.values) {
           final GamePoint next = _step(current, dir);
-          if (!_isPlayable(next) || blocked.contains(next) || reachable.contains(next)) {
+          if (!_isPlayable(next) ||
+              blocked.contains(next) ||
+              reachable.contains(next)) {
             continue;
           }
           reachable.add(next);
@@ -360,7 +407,7 @@ class GameProvider extends ChangeNotifier {
       _gameOver();
       return;
     }
-    _food = candidates[random.nextInt(candidates.length)];
+    _food = candidates[_random.nextInt(candidates.length)];
     if (notify) {
       notifyListeners();
     }
@@ -376,18 +423,19 @@ class GameProvider extends ChangeNotifier {
         (_direction == Direction.right && newDir == Direction.left)) {
       return;
     }
-    
+
     // Ignore if no change in intended direction
     if (newDir == (_nextDirection ?? _direction)) {
       return;
     }
-    
+
     // Debounce rapid swipes - keep responsive while preventing accidental doubles.
     final now = DateTime.now();
-    if (_lastSwipeTime != null && now.difference(_lastSwipeTime!).inMilliseconds < 25) {
+    if (_lastSwipeTime != null &&
+        now.difference(_lastSwipeTime!).inMilliseconds < 25) {
       return;
     }
-    
+
     // Also prevent setting same direction twice in one tick to avoid rapid self-collision scenarios
     // Use buffer
     _nextDirection = newDir;
@@ -476,7 +524,10 @@ class GameProvider extends ChangeNotifier {
         newHead = GamePoint(newHead.x, 0);
       }
     } else {
-      if (newHead.x < 0 || newHead.x >= gridWidth || newHead.y < 0 || newHead.y >= gridHeight) {
+      if (newHead.x < 0 ||
+          newHead.x >= gridWidth ||
+          newHead.y < 0 ||
+          newHead.y >= gridHeight) {
         _gameOver();
         return;
       }
@@ -492,23 +543,23 @@ class GameProvider extends ChangeNotifier {
     // If we simply check snake.contains, we might collide with tail that is about to move away.
     // But logically, if newHead equals last tail segment, it's fine.
     // However, if we ate food, we grow, so tail doesn't move.
-    
+
     bool eaten = newHead == _food;
-    
+
     // Check collision with body (excluding tail if not eaten)
     if (_snake.contains(newHead)) {
-       if (newHead == _snake.last && !eaten) {
-         // Safe
-       } else {
-         _gameOver();
-         return;
-       }
+      if (newHead == _snake.last && !eaten) {
+        // Safe
+      } else {
+        _gameOver();
+        return;
+      }
     }
-    
+
     // Check Obstacle Collision
     if (_obstacles.contains(newHead)) {
-       _gameOver();
-       return;
+      _gameOver();
+      return;
     }
 
     // Create NEW list for immutability so CustomPainter detects change
@@ -518,10 +569,14 @@ class GameProvider extends ChangeNotifier {
     if (eaten) {
       _score++;
       // Update snake BEFORE generating food so food doesn't spawn on head
-      _snake = newSnake; 
-      
+      _snake = newSnake;
+
       _updateTimerSpeed();
       _generateFood(notify: false);
+      if (_currentLevel == GameLevel.lightsOut) {
+        _lightsOutFoodVisible = true;
+        _startLightsOutFoodCycleIfNeeded(notify: false);
+      }
 
       _triggerVibration(duration: 100, amplitude: 200);
       _playSound('eat.wav');
@@ -529,10 +584,10 @@ class GameProvider extends ChangeNotifier {
       newSnake.removeLast();
       _snake = newSnake;
     }
-    
+
     notifyListeners();
   }
-  
+
   void _updateTimerSpeed() {
     final int newSpeed = _computeTickSpeed(_score);
     if (_gameTimer == null || newSpeed == _currentTickSpeedMs) {
@@ -561,6 +616,49 @@ class GameProvider extends ChangeNotifier {
   }
 
   bool _isPlayable(GamePoint p) => _playableCellSet.contains(p);
+
+  void _cancelLightsOutFoodTimer() {
+    _lightsOutFoodTimer?.cancel();
+    _lightsOutFoodTimer = null;
+  }
+
+  void _startLightsOutFoodCycleIfNeeded({bool notify = true}) {
+    _cancelLightsOutFoodTimer();
+    if (_currentLevel != GameLevel.lightsOut || _status != GameStatus.playing) {
+      _lightsOutFoodVisible = true;
+      if (notify) {
+        notifyListeners();
+      }
+      return;
+    }
+    _lightsOutFoodVisible = true;
+    if (notify) {
+      notifyListeners();
+    }
+    _lightsOutFoodTimer = Timer(const Duration(seconds: 1), () {
+      if (_currentLevel != GameLevel.lightsOut ||
+          _status != GameStatus.playing) {
+        return;
+      }
+      _lightsOutFoodVisible = false;
+      notifyListeners();
+      _scheduleLightsOutFoodRespawn();
+    });
+  }
+
+  void _scheduleLightsOutFoodRespawn() {
+    _cancelLightsOutFoodTimer();
+    final int hiddenMs = 1000;
+    _lightsOutFoodTimer = Timer(Duration(milliseconds: hiddenMs), () {
+      if (_currentLevel != GameLevel.lightsOut ||
+          _status != GameStatus.playing) {
+        return;
+      }
+      _lightsOutFoodVisible = true;
+      notifyListeners();
+      _startLightsOutFoodCycleIfNeeded(notify: false);
+    });
+  }
 
   List<GamePoint> _buildIntermediatePlayableShape(int shape, Random random) {
     final Set<GamePoint> cells = <GamePoint>{};
@@ -633,6 +731,65 @@ class GameProvider extends ChangeNotifier {
     return cells.toList();
   }
 
+  List<GamePoint> _buildLightsOutPlayableShape(Random random) {
+    const int minPlayableCells = 290;
+    List<GamePoint> bestCells = _buildFullPlayableCells();
+    int bestArea = 0;
+    int? chosenShape;
+
+    for (int i = 0; i < 24; i++) {
+      int shapePattern = random.nextInt(6);
+      if (_lastLightsOutShapeId != null &&
+          shapePattern == _lastLightsOutShapeId) {
+        shapePattern = (shapePattern + 1 + random.nextInt(5)) % 6;
+      }
+      final List<GamePoint> candidate = _buildIntermediatePlayableShape(
+        shapePattern,
+        random,
+      );
+      final int area = candidate.length;
+      if (area > bestArea) {
+        bestArea = area;
+        bestCells = candidate;
+        chosenShape = shapePattern;
+      }
+      if (area >= minPlayableCells && _isConnectedPlayableArea(candidate)) {
+        _lastLightsOutShapeId = shapePattern;
+        return candidate;
+      }
+    }
+
+    _lastLightsOutShapeId = chosenShape ?? _lastLightsOutShapeId;
+    if (_isConnectedPlayableArea(bestCells)) {
+      return bestCells;
+    }
+    return _buildFullPlayableCells();
+  }
+
+  bool _isConnectedPlayableArea(List<GamePoint> cells) {
+    if (cells.isEmpty) {
+      return false;
+    }
+    final Set<GamePoint> cellSet = cells.toSet();
+    final Set<GamePoint> visited = <GamePoint>{};
+    final List<GamePoint> queue = <GamePoint>[cells.first];
+    visited.add(cells.first);
+
+    int index = 0;
+    while (index < queue.length) {
+      final GamePoint current = queue[index++];
+      for (final Direction dir in Direction.values) {
+        final GamePoint next = _step(current, dir);
+        if (!cellSet.contains(next) || visited.contains(next)) {
+          continue;
+        }
+        visited.add(next);
+        queue.add(next);
+      }
+    }
+    return visited.length == cellSet.length;
+  }
+
   void _generateIntermediateObstacles(Random random) {
     _obstacles = [];
     final int pattern = random.nextInt(3);
@@ -640,7 +797,8 @@ class GameProvider extends ChangeNotifier {
     bool canPlace(GamePoint p) {
       final int centerX = gridWidth ~/ 2;
       final int centerY = gridHeight ~/ 2;
-      final bool nearSpawn = (p.x - centerX).abs() <= 2 && (p.y - centerY).abs() <= 4;
+      final bool nearSpawn =
+          (p.x - centerX).abs() <= 2 && (p.y - centerY).abs() <= 4;
       return _isPlayable(p) && !_obstacles.contains(p) && !nearSpawn;
     }
 
@@ -653,7 +811,8 @@ class GameProvider extends ChangeNotifier {
     if (pattern == 0) {
       final int count = 12 + random.nextInt(7);
       for (int i = 0; i < count; i++) {
-        final GamePoint p = _playableCells[random.nextInt(_playableCells.length)];
+        final GamePoint p =
+            _playableCells[random.nextInt(_playableCells.length)];
         addPoint(p);
       }
       return;
@@ -688,7 +847,7 @@ class GameProvider extends ChangeNotifier {
     _lastZenPatternId = pattern;
 
     final Set<GamePoint> zenWalls = <GamePoint>{};
-    
+
     switch (pattern) {
       case 0:
         _buildZenConcentric(zenWalls);
@@ -713,7 +872,7 @@ class GameProvider extends ChangeNotifier {
         // Calculate distance from edges
         final int edgeDistX = min(x, gridWidth - 1 - x);
         final int edgeDistY = min(y, gridHeight - 1 - y);
-        
+
         // Calculate distance from center
         final int dx = (x - centerX).abs();
         final int dy = (y - centerY).abs();
@@ -721,21 +880,24 @@ class GameProvider extends ChangeNotifier {
         bool isWall = false;
 
         // Ring 1 (Outer) - Inset 1
-        if ((edgeDistX == 1 && edgeDistY >= 1) || (edgeDistY == 1 && edgeDistX >= 1)) {
+        if ((edgeDistX == 1 && edgeDistY >= 1) ||
+            (edgeDistY == 1 && edgeDistX >= 1)) {
           isWall = true;
           // Openings: Top/Bottom Center
           if (edgeDistY == 1 && dx <= 1) isWall = false;
         }
 
         // Ring 2 (Middle) - Inset 4
-        if ((edgeDistX == 4 && edgeDistY >= 4) || (edgeDistY == 4 && edgeDistX >= 4)) {
+        if ((edgeDistX == 4 && edgeDistY >= 4) ||
+            (edgeDistY == 4 && edgeDistX >= 4)) {
           isWall = true;
           // Openings: Left/Right Center
           if (edgeDistX == 4 && dy <= 1) isWall = false;
         }
 
         // Ring 3 (Inner) - Inset 7
-        if ((edgeDistX == 7 && edgeDistY >= 7) || (edgeDistY == 7 && edgeDistX >= 7)) {
+        if ((edgeDistX == 7 && edgeDistY >= 7) ||
+            (edgeDistY == 7 && edgeDistX >= 7)) {
           isWall = true;
           // Openings: Top/Bottom Center
           if (edgeDistY == 7 && dx <= 1) isWall = false;
@@ -744,8 +906,8 @@ class GameProvider extends ChangeNotifier {
         // Inner Pillars (Center Chamber Accents)
         // Placed symmetrically inside the innermost ring
         if (dx == 2 && dy == 2) {
-           // Corner pillars inside the center
-           isWall = true;
+          // Corner pillars inside the center
+          isWall = true;
         }
 
         if (_isSafeZone(x, y)) {
@@ -773,14 +935,14 @@ class GameProvider extends ChangeNotifier {
 
         if ((x >= 2 && x <= 8) || (x >= 12 && x <= 18)) {
           if (y >= 2 && y <= gridHeight - 3) {
-             // Hollow out the blocks
-             if (x > 2 && x < 8 && y > 2 && y < gridHeight - 3) {
-               isWall = false;
-             } else if (x > 12 && x < 18 && y > 2 && y < gridHeight - 3) {
-               isWall = false;
-             } else {
-               isWall = true;
-             }
+            // Hollow out the blocks
+            if (x > 2 && x < 8 && y > 2 && y < gridHeight - 3) {
+              isWall = false;
+            } else if (x > 12 && x < 18 && y > 2 && y < gridHeight - 3) {
+              isWall = false;
+            } else {
+              isWall = true;
+            }
           }
         }
 
@@ -789,7 +951,9 @@ class GameProvider extends ChangeNotifier {
           // Side openings
           if ((x == 2 || x == 18) && (y == gridHeight ~/ 2)) isWall = false;
           // Inner openings
-          if ((x == 8 || x == 12) && (y == 8 || y == gridHeight - 9)) isWall = false;
+          if ((x == 8 || x == 12) && (y == 8 || y == gridHeight - 9)) {
+            isWall = false;
+          }
         }
 
         if (isWall) walls.add(GamePoint(x, y));
@@ -802,15 +966,15 @@ class GameProvider extends ChangeNotifier {
     for (int y = 4; y < gridHeight - 4; y += 5) {
       for (int x = 2; x < gridWidth - 2; x++) {
         if (_isSafeZone(x, y)) continue;
-        
+
         // Gap pattern: Center gap for even index layers, Side gaps for odd
         bool isGap = false;
         if ((y ~/ 5) % 2 == 0) {
-           // Center gap
-           if ((x - (gridWidth ~/ 2)).abs() <= 2) isGap = true;
+          // Center gap
+          if ((x - (gridWidth ~/ 2)).abs() <= 2) isGap = true;
         } else {
-           // Side gaps
-           if (x < 5 || x > gridWidth - 6) isGap = true;
+          // Side gaps
+          if (x < 5 || x > gridWidth - 6) isGap = true;
         }
 
         if (!isGap) {
@@ -818,12 +982,12 @@ class GameProvider extends ChangeNotifier {
         }
       }
     }
-    
+
     // Vertical connectors on sides
     for (int y = 4; y < gridHeight - 4; y++) {
-       if (_isSafeZone(2, y)) continue;
-       walls.add(GamePoint(2, y));
-       walls.add(GamePoint(gridWidth - 3, y));
+      if (_isSafeZone(2, y)) continue;
+      walls.add(GamePoint(2, y));
+      walls.add(GamePoint(gridWidth - 3, y));
     }
   }
 
@@ -888,7 +1052,8 @@ class GameProvider extends ChangeNotifier {
   }
 
   (List<GamePoint>, Direction) _buildInitialSpawn(Random random) {
-    final List<GamePoint> candidateHeads = List<GamePoint>.from(_playableCells)..shuffle(random);
+    final List<GamePoint> candidateHeads = List<GamePoint>.from(_playableCells)
+      ..shuffle(random);
     final List<Direction> dirs = List<Direction>.from(Direction.values);
 
     for (final head in candidateHeads) {
@@ -899,7 +1064,9 @@ class GameProvider extends ChangeNotifier {
         final GamePoint tail = _step(mid, behind);
         final List<GamePoint> spawn = [head, mid, tail];
 
-        final bool spawnValid = spawn.every((p) => _isPlayable(p) && !_obstacles.contains(p));
+        final bool spawnValid = spawn.every(
+          (p) => _isPlayable(p) && !_obstacles.contains(p),
+        );
         if (!spawnValid) {
           continue;
         }
@@ -913,7 +1080,10 @@ class GameProvider extends ChangeNotifier {
       }
     }
 
-    return ([GamePoint(10, 20), GamePoint(10, 21), GamePoint(10, 22)], Direction.up);
+    return (
+      [GamePoint(10, 20), GamePoint(10, 21), GamePoint(10, 22)],
+      Direction.up,
+    );
   }
 
   Direction _opposite(Direction direction) {
@@ -954,11 +1124,18 @@ class GameProvider extends ChangeNotifier {
     return GamePoint(x, y);
   }
 
-  bool _hasFreeAhead(GamePoint head, Direction direction, int minFree, Set<GamePoint> occupied) {
+  bool _hasFreeAhead(
+    GamePoint head,
+    Direction direction,
+    int minFree,
+    Set<GamePoint> occupied,
+  ) {
     GamePoint cursor = head;
     for (int i = 0; i < minFree; i++) {
       cursor = _step(cursor, direction);
-      if (!_isPlayable(cursor) || _obstacles.contains(cursor) || occupied.contains(cursor)) {
+      if (!_isPlayable(cursor) ||
+          _obstacles.contains(cursor) ||
+          occupied.contains(cursor)) {
         return false;
       }
     }
@@ -984,7 +1161,9 @@ class GameProvider extends ChangeNotifier {
       }
       for (final dir in Direction.values) {
         final GamePoint next = _step(current, dir);
-        if (!_isPlayable(next) || blocked.contains(next) || visited.contains(next)) {
+        if (!_isPlayable(next) ||
+            blocked.contains(next) ||
+            visited.contains(next)) {
           continue;
         }
         visited.add(next);
@@ -997,6 +1176,7 @@ class GameProvider extends ChangeNotifier {
   @override
   void dispose() {
     _gameTimer?.cancel();
+    _cancelLightsOutFoodTimer();
     for (final player in _sfxPlayers) {
       player.dispose();
     }

@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -27,8 +28,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void initState() {
     super.initState();
     _animationController = AnimationController(
-       vsync: this, 
-       duration: const Duration(milliseconds: 1000),
+      vsync: this,
+      duration: const Duration(milliseconds: 60000),
     );
     _ensureHomeSlideController();
   }
@@ -41,16 +42,17 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   AnimationController _ensureHomeSlideController() {
-    return _homeSlideController ??= AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-    )..addListener(() {
-        if (_homeSlideAnimation != null && mounted) {
-          setState(() {
-            _homeSlideProgress = _homeSlideAnimation!.value;
-          });
-        }
-      });
+    return _homeSlideController ??=
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 220),
+        )..addListener(() {
+          if (_homeSlideAnimation != null && mounted) {
+            setState(() {
+              _homeSlideProgress = _homeSlideAnimation!.value;
+            });
+          }
+        });
   }
 
   @override
@@ -58,26 +60,33 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     // Access state
     final gameProvider = Provider.of<GameProvider>(context);
+    final bool isLightsOut = gameProvider.currentLevel == GameLevel.lightsOut;
 
     if (gameProvider.status == GameStatus.initial) {
+      if (_animationController.isAnimating) {
+        _animationController.stop();
+        _animationController.reset();
+      }
       return _buildHomeScreen(context, gameProvider);
     }
-    
-    // Manage animation based on state
-    if (gameProvider.status == GameStatus.paused || gameProvider.status == GameStatus.gameOver) {
-      if (!_animationController.isAnimating) {
-        _animationController.repeat(reverse: false);
+
+    // Keep animation running while playing and after death, but freeze on pause.
+    if (gameProvider.status == GameStatus.paused) {
+      if (_animationController.isAnimating) {
+        _animationController.stop();
       }
-    } else {
-      _animationController.stop();
-      _animationController.reset();
+    } else if (!_animationController.isAnimating) {
+      _animationController.repeat(reverse: false);
     }
 
     // Calculate aspect ratio based on grid dimensions (20/30 = 0.66)
     final double aspectRatio = GameProvider.gridWidth / GameProvider.gridHeight;
 
     return Scaffold(
-      backgroundColor: AppTheme.creamBackground,
+      resizeToAvoidBottomInset: false,
+      backgroundColor: isLightsOut
+          ? AppTheme.lightsOutBackground
+          : AppTheme.creamBackground,
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (details) {
@@ -87,72 +96,99 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           gameProvider.handleSwipe(details);
         },
         child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 20),
-              // --- HEADER (Scores) ---
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          bottom: true,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SizedBox(
+                height: constraints.maxHeight,
+                child: Column(
                   children: [
-                    _buildScoreBlock(
-                      context, 
-                      "SCORE", 
-                      gameProvider.score,
-                      true, // In game score is always relevant
-                      textColor: AppTheme.foodOrange,
+                    SizedBox(height: constraints.maxHeight * 0.025),
+                    // --- HEADER (Scores) ---
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 32.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildScoreBlock(
+                            context,
+                            "SCORE",
+                            gameProvider.score,
+                            true,
+                            textColor: AppTheme.foodOrange,
+                            labelColor: isLightsOut
+                                ? AppTheme.lightsOutText.withValues(alpha: 0.75)
+                                : null,
+                          ),
+                          _buildScoreBlock(
+                            context,
+                            "HIGH",
+                            gameProvider.highScore,
+                            false,
+                            textColor: isLightsOut
+                                ? AppTheme.lightsOutText
+                                : AppTheme.darkText,
+                            labelColor: isLightsOut
+                                ? AppTheme.lightsOutText.withValues(alpha: 0.70)
+                                : null,
+                          ),
+                        ],
+                      ),
                     ),
-                    _buildScoreBlock(
-                      context, 
-                      "HIGH", 
-                      gameProvider.highScore,
-                      false, // Grey for high score
-                      textColor: AppTheme.darkText,
+
+                    const Spacer(),
+
+                    // --- GAME BOARD ---
+                    Center(
+                      child: Container(
+                        width: constraints.maxWidth * 0.90,
+                        color: isLightsOut
+                            ? AppTheme.lightsOutBoardBackground
+                            : AppTheme.creamBackground,
+                        child: AspectRatio(
+                          aspectRatio: aspectRatio,
+                          child: AnimatedBuilder(
+                            animation: _animationController,
+                            builder: (context, child) {
+                              return CustomPaint(
+                                painter: SnakePainter(
+                                  snake: gameProvider.snake,
+                                  obstacles: gameProvider.obstacles,
+                                  playableCells: gameProvider.playableCells,
+                                  food: gameProvider.food,
+                                  direction: gameProvider.direction,
+                                  currentLevel: gameProvider.currentLevel,
+                                  gridWidth: gameProvider.width,
+                                  gridHeight: gameProvider.height,
+                                  snakeTickSpeedMs: gameProvider.currentTickSpeedMs,
+                                  foodVisible: gameProvider.foodVisible,
+                                  animationValue: _animationController.value,
+                                  animationCycleMs:
+                                      _animationController.duration!.inMilliseconds,
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    // --- FOOTER (Buttons) ---
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(32, 0, 32, constraints.maxHeight * 0.035),
+                      child: _buildFooter(
+                        context,
+                        gameProvider,
+                        isLightsOut: isLightsOut,
+                      ),
                     ),
                   ],
                 ),
-              ),
-
-              const Spacer(),
-
-              // --- GAME BOARD ---
-              Center(
-                child: Container(
-                  width: MediaQuery.of(context).size.width * 0.90,
-                  color: AppTheme.creamBackground,
-                  child: AspectRatio(
-                    aspectRatio: aspectRatio,
-                    child: AnimatedBuilder(
-                      animation: _animationController,
-                      builder: (context, child) {
-                        return CustomPaint(
-                          painter: SnakePainter(
-                            snake: gameProvider.snake,
-                            obstacles: gameProvider.obstacles,
-                            playableCells: gameProvider.playableCells,
-                            food: gameProvider.food,
-                            direction: gameProvider.direction,
-                            gridWidth: gameProvider.width,
-                            gridHeight: gameProvider.height,
-                            animationValue: _animationController.value,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-
-              const Spacer(),
-
-              // --- FOOTER (Buttons) ---
-              Padding(
-                padding: const EdgeInsets.fromLTRB(32, 0, 32, 32),
-                child: _buildFooter(context, gameProvider),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
@@ -170,6 +206,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: AppTheme.creamBackground,
       body: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -179,131 +216,157 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         onLongPressStart: (_) => _onHomeLongPressStart(),
         onLongPressEnd: (_) => _onHomeLongPressEnd(provider),
         child: SafeArea(
-          child: Column(
-            children: [
-              // Top Bar
-              Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          bottom: true,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final h = constraints.maxHeight;
+              return SizedBox(
+                height: h,
+                child: Column(
                   children: [
-                    const Icon(Icons.leaderboard_outlined, color: AppTheme.darkText),
-                    IconButton(
-                      icon: const Icon(Icons.settings_outlined, color: AppTheme.darkText),
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute<void>(
-                            builder: (_) => const SettingsScreen(),
+                    // Top Bar
+                    Padding(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Icon(
+                            Icons.leaderboard_outlined,
+                            color: AppTheme.darkText,
                           ),
-                        );
-                      },
+                          IconButton(
+                            icon: const Icon(
+                              Icons.settings_outlined,
+                              color: AppTheme.darkText,
+                            ),
+                            onPressed: () {
+                              Navigator.of(context).push(
+                                MaterialPageRoute<void>(
+                                  builder: (_) => const SettingsScreen(),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    SizedBox(height: h * 0.08),
+
+                    // Logo
+                    Image.asset('assets/logo-no-bg.png', width: 80, height: 80),
+
+                    SizedBox(height: h * 0.03),
+
+                    Text(
+                      "SELECT GAME",
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        fontSize: 14,
+                        letterSpacing: 2.0,
+                      ),
+                    ),
+
+                    SizedBox(height: h * 0.02),
+
+                    // Swipeable Carousel Area
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, innerConstraints) {
+                          _homeSlideWidth = innerConstraints.maxWidth <= 0
+                              ? 1.0
+                              : innerConstraints.maxWidth;
+                          final double textSpacing = _homeSlideWidth * 0.72;
+                          final int nextIndex = _wrapLevelIndex(_homeLevelIndex + 1);
+                          final int prevIndex = _wrapLevelIndex(_homeLevelIndex - 1);
+                          final bool draggingRight = _homeSlideProgress >= 0;
+                          final int incomingIndex = draggingRight
+                              ? prevIndex
+                              : nextIndex;
+                          final bool showIncoming = _homeSlideProgress.abs() > 0.0001;
+                          final double currentDx = _homeSlideProgress * textSpacing;
+                          final double incomingDx = draggingRight
+                              ? currentDx - textSpacing
+                              : currentDx + textSpacing;
+                          return Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              ClipRect(
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    if (showIncoming)
+                                      Transform.translate(
+                                        offset: Offset(incomingDx, 0),
+                                        child: _buildLevelText(
+                                          context,
+                                          GameLevel.values[incomingIndex],
+                                        ),
+                                      ),
+                                    Transform.translate(
+                                      offset: Offset(currentDx, 0),
+                                      child: _buildLevelText(
+                                        context,
+                                        GameLevel.values[_homeLevelIndex],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.arrow_left_rounded,
+                                        size: 40,
+                                        color: AppTheme.darkText,
+                                      ),
+                                      onPressed: () => _animateHomeStep(provider, -1),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.arrow_right_rounded,
+                                        size: 40,
+                                        color: AppTheme.darkText,
+                                      ),
+                                      onPressed: () => _animateHomeStep(provider, 1),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+
+                    const Spacer(flex: 2),
+
+                    // Start Button
+                    Padding(
+                      padding: EdgeInsets.only(bottom: h * 0.05),
+                      child: _TextButton(text: "START", onTap: provider.startGame),
                     ),
                   ],
                 ),
-              ),
-              
-              const SizedBox(height: 80),
-              
-              // Logo
-              Image.asset(
-                'assets/logo-no-bg.png',
-                width: 80, 
-                height: 80,
-              ),
-              
-              const SizedBox(height: 32),
-              
-              Text(
-                "SELECT GAME",
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  fontSize: 14,
-                  letterSpacing: 2.0,
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              // Swipeable Carousel Area (Expanded to take available space)
-              Expanded(
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    _homeSlideWidth = constraints.maxWidth <= 0 ? 1.0 : constraints.maxWidth;
-                    final double textSpacing = _homeSlideWidth * 0.72;
-                    final int nextIndex = _wrapLevelIndex(_homeLevelIndex + 1);
-                    final int prevIndex = _wrapLevelIndex(_homeLevelIndex - 1);
-                    final bool draggingRight = _homeSlideProgress >= 0;
-                    final int incomingIndex = draggingRight ? prevIndex : nextIndex;
-                    final bool showIncoming = _homeSlideProgress.abs() > 0.0001;
-                    final double currentDx = _homeSlideProgress * textSpacing;
-                    final double incomingDx = draggingRight
-                        ? currentDx - textSpacing
-                        : currentDx + textSpacing;
-                    return Stack(
-                      alignment: Alignment.center,
-                      children: [
-                        ClipRect(
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              if (showIncoming)
-                                Transform.translate(
-                                  offset: Offset(incomingDx, 0),
-                                  child: _buildLevelText(context, GameLevel.values[incomingIndex]),
-                                ),
-                              Transform.translate(
-                                offset: Offset(currentDx, 0),
-                                child: _buildLevelText(context, GameLevel.values[_homeLevelIndex]),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.arrow_left_rounded, size: 40, color: AppTheme.darkText),
-                                onPressed: () => _animateHomeStep(provider, -1),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.arrow_right_rounded, size: 40, color: AppTheme.darkText),
-                                onPressed: () => _animateHomeStep(provider, 1),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ),
-              
-              const Spacer(flex: 2),
-              
-              // Start Button
-              Padding(
-                padding: const EdgeInsets.only(bottom: 48.0),
-                child: _TextButton(
-                  text: "START",
-                  onTap: provider.startGame,
-                ),
-              ),
-            ],
+              );
+            },
           ),
         ),
       ),
     );
   }
-  
+
   Widget _buildLevelText(BuildContext context, GameLevel level) {
     return Text(
       _levelName(level),
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.displayLarge?.copyWith(
-            color: AppTheme.darkText.withValues(alpha: 0.55),
-            fontSize: 28,
-          ),
+        color: AppTheme.darkText.withValues(alpha: 0.55),
+        fontSize: 28,
+      ),
     );
   }
 
@@ -335,7 +398,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   void _onHomeDragUpdate(DragUpdateDetails details) {
     setState(() {
-      _homeSlideProgress = (_homeSlideProgress + (details.delta.dx / _homeSlideWidth)).clamp(-1.0, 1.0);
+      _homeSlideProgress =
+          (_homeSlideProgress + (details.delta.dx / _homeSlideWidth)).clamp(
+            -1.0,
+            1.0,
+          );
     });
   }
 
@@ -396,9 +463,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (homeSlideController.isAnimating) {
       homeSlideController.stop();
     }
-    _homeSlideAnimation = Tween<double>(begin: _homeSlideProgress, end: target).animate(
-      CurvedAnimation(parent: homeSlideController, curve: Curves.easeOutCubic),
-    );
+    _homeSlideAnimation = Tween<double>(begin: _homeSlideProgress, end: target)
+        .animate(
+          CurvedAnimation(
+            parent: homeSlideController,
+            curve: Curves.easeOutCubic,
+          ),
+        );
     homeSlideController
       ..duration = const Duration(milliseconds: 180)
       ..forward(from: 0).whenComplete(() {
@@ -422,47 +493,66 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     });
   }
 
-
-  Widget _buildScoreBlock(BuildContext context, String label, int value, bool isPlaying, {Color? textColor}) {
-    Color scoreColor = textColor ?? (isPlaying ? AppTheme.foodOrange : AppTheme.foodOrange.withValues(alpha: 0.5));
+  Widget _buildScoreBlock(
+    BuildContext context,
+    String label,
+    int value,
+    bool isPlaying, {
+    Color? textColor,
+    Color? labelColor,
+  }) {
+    Color scoreColor =
+        textColor ??
+        (isPlaying
+            ? AppTheme.foodOrange
+            : AppTheme.foodOrange.withValues(alpha: 0.5));
     // If not playing (initial), show 0 logic? User wants "always show 0 with food color but low opacity"
     // Wait, "back to current screen but there i still see old score".
     // So if Initial/Home -> show 0 (low opacity). If Playing -> show actual score (full opacity).
-    
+
     int displayValue = value;
-    // Actually, gameProvider resets score on StartGame. 
+    // Actually, gameProvider resets score on StartGame.
     // But on "Home" (Initial), gameProvider.score might still be the old score if we didn't reset it?
     // Let's check provider.endGame(). it sets status to initial but doesn't reset score.
     // User wants to see 0.
-    
+
     // So we can override display here.
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           label,
-          style: Theme.of(context).textTheme.labelSmall,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: labelColor),
         ),
         const SizedBox(height: 4),
         Text(
           displayValue.toString(),
-          style: Theme.of(context).textTheme.displayLarge?.copyWith(
-            fontSize: 40,
-            color: scoreColor,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.displayLarge?.copyWith(fontSize: 40, color: scoreColor),
         ),
       ],
     );
   }
 
-  Widget _buildFooter(BuildContext context, GameProvider provider) {
+  Widget _buildFooter(
+    BuildContext context,
+    GameProvider provider, {
+    bool isLightsOut = false,
+  }) {
+    final Color buttonColor = isLightsOut
+        ? AppTheme.lightsOutText.withValues(alpha: 0.85)
+        : AppTheme.darkText.withValues(alpha: 0.6);
     switch (provider.status) {
       case GameStatus.initial:
         return Center(
           child: _TextButton(
             text: "START",
             onTap: provider.startGame,
+            color: buttonColor,
           ),
         );
       case GameStatus.playing:
@@ -472,10 +562,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _TextButton(
               text: "HOME",
               onTap: provider.endGame,
+              color: buttonColor,
             ),
             _TextButton(
               text: "PAUSE",
               onTap: provider.pauseGame,
+              color: buttonColor,
             ),
           ],
         );
@@ -486,10 +578,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _TextButton(
               text: "HOME",
               onTap: provider.endGame,
+              color: buttonColor,
             ),
             _TextButton(
               text: "RESUME",
               onTap: provider.pauseGame,
+              color: buttonColor,
             ),
           ],
         );
@@ -500,10 +594,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _TextButton(
               text: "HOME",
               onTap: provider.endGame,
+              color: buttonColor,
             ),
             _TextButton(
               text: "RESTART",
               onTap: provider.startGame,
+              color: buttonColor,
             ),
           ],
         );
@@ -514,8 +610,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 class _TextButton extends StatelessWidget {
   final String text;
   final VoidCallback onTap;
+  final Color? color;
 
-  const _TextButton({required this.text, required this.onTap});
+  const _TextButton({required this.text, required this.onTap, this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -523,7 +620,7 @@ class _TextButton extends StatelessWidget {
       onTap: onTap,
       child: Text(
         text,
-        style: Theme.of(context).textTheme.labelLarge,
+        style: Theme.of(context).textTheme.labelLarge?.copyWith(color: color),
       ),
     );
   }

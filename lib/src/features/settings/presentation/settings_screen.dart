@@ -42,6 +42,7 @@ class SettingsScreen extends StatelessWidget {
     final provider = context.watch<GameProvider>();
 
     return Scaffold(
+      resizeToAvoidBottomInset: false,
       backgroundColor: AppTheme.creamBackground,
       appBar: AppBar(
         backgroundColor: AppTheme.creamBackground,
