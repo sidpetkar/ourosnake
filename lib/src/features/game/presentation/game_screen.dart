@@ -99,11 +99,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           bottom: true,
           child: LayoutBuilder(
             builder: (context, constraints) {
+              final totalH = constraints.maxHeight;
+              final totalW = constraints.maxWidth;
+
+              // Reserve space for header (~12%) and footer (~8%)
+              final headerH = totalH * 0.12;
+              final footerH = totalH * 0.08;
+              final boardMaxH = totalH - headerH - footerH;
+
+              // Compute board width: fit by height first, then clamp to 90% of width
+              final boardWidthFromHeight = boardMaxH * aspectRatio;
+              final boardWidthFromWidth = totalW * 0.90;
+              final boardW = boardWidthFromHeight < boardWidthFromWidth
+                  ? boardWidthFromHeight
+                  : boardWidthFromWidth;
+              final boardH = boardW / aspectRatio;
+
               return SizedBox(
-                height: constraints.maxHeight,
+                height: totalH,
                 child: Column(
                   children: [
-                    SizedBox(height: constraints.maxHeight * 0.025),
+                    SizedBox(height: totalH * 0.02),
                     // --- HEADER (Scores) ---
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 32.0),
@@ -141,13 +157,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
                     // --- GAME BOARD ---
                     Center(
-                      child: Container(
-                        width: constraints.maxWidth * 0.90,
-                        color: isLightsOut
-                            ? AppTheme.lightsOutBoardBackground
-                            : AppTheme.creamBackground,
-                        child: AspectRatio(
-                          aspectRatio: aspectRatio,
+                      child: SizedBox(
+                        width: boardW,
+                        height: boardH,
+                        child: Container(
+                          color: isLightsOut
+                              ? AppTheme.lightsOutBoardBackground
+                              : AppTheme.creamBackground,
                           child: AnimatedBuilder(
                             animation: _animationController,
                             builder: (context, child) {
@@ -178,7 +194,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
                     // --- FOOTER (Buttons) ---
                     Padding(
-                      padding: EdgeInsets.fromLTRB(32, 0, 32, constraints.maxHeight * 0.035),
+                      padding: EdgeInsets.fromLTRB(32, 0, 32, totalH * 0.025),
                       child: _buildFooter(
                         context,
                         gameProvider,
