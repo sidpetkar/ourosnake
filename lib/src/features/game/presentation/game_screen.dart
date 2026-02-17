@@ -1,4 +1,3 @@
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -90,7 +89,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         });
   }
 
-  @override
   @override
   Widget build(BuildContext context) {
     // Access state
@@ -269,177 +267,165 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _homeLevelIndex = provider.currentLevel.index;
     }
 
-    // Compute the same constrained width as the game screen
-    final double aspectRatio = GameProvider.gridWidth / GameProvider.gridHeight;
-
     return Scaffold(
       resizeToAvoidBottomInset: false,
       backgroundColor: AppTheme.creamBackground,
       body: SafeArea(
-        bottom: true,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final h = constraints.maxHeight;
-            final w = constraints.maxWidth;
-
-            // Match the game screen's board width calculation
-            final headerH = h * 0.12;
-            final footerH = h * 0.08;
-            final boardMaxH = h - headerH - footerH;
-            final boardWidthFromHeight = boardMaxH * aspectRatio;
-            final boardWidthFromWidth = w * 0.90;
-            final contentW = boardWidthFromHeight < boardWidthFromWidth
-                ? boardWidthFromHeight
-                : boardWidthFromWidth;
-
-            return SizedBox(
-              height: h,
-              child: Column(
-                children: [
-                  // Top Bar -- constrained to content width
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24.0),
-                    child: Center(
-                      child: SizedBox(
-                        width: contentW,
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Icon(
-                              Icons.leaderboard_outlined,
-                              color: AppTheme.darkText,
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.settings_outlined,
-                                color: AppTheme.darkText,
-                              ),
-                              onPressed: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => const SettingsScreen(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
-                        ),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            children: [
+              // ── Header: Leaderboard (left) · Settings (right) ──
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        // TODO: navigate to leaderboard
+                      },
+                      child: const Icon(
+                        Icons.leaderboard_outlined,
+                        color: AppTheme.darkText,
+                        size: 24,
                       ),
                     ),
-                  ),
-
-                  SizedBox(height: h * 0.06),
-
-                  // Logo
-                  Image.asset('assets/logo-no-bg.png', width: 80, height: 80),
-
-                  SizedBox(height: h * 0.03),
-
-                  Text(
-                    "SELECT GAME",
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      fontSize: 14,
-                      letterSpacing: 2.0,
+                    GestureDetector(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => const SettingsScreen(),
+                          ),
+                        );
+                      },
+                      child: const Icon(
+                        Icons.settings_outlined,
+                        color: AppTheme.darkText,
+                        size: 24,
+                      ),
                     ),
-                  ),
+                  ],
+                ),
+              ),
 
-                  SizedBox(height: h * 0.02),
+              const Spacer(),
 
-                  // Swipeable Carousel Area -- constrained + drag handler only here
-                  Expanded(
-                    child: Center(
-                      child: SizedBox(
-                        width: contentW,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onHorizontalDragStart: (_) => _onHomeDragStart(),
-                          onHorizontalDragUpdate: (details) => _onHomeDragUpdate(details),
-                          onHorizontalDragEnd: (details) => _onHomeDragEnd(details, provider),
-                          onLongPressStart: (_) => _onHomeLongPressStart(),
-                          onLongPressEnd: (_) => _onHomeLongPressEnd(provider),
-                          child: LayoutBuilder(
-                            builder: (context, innerConstraints) {
-                              _homeSlideWidth = innerConstraints.maxWidth <= 0
-                                  ? 1.0
-                                  : innerConstraints.maxWidth;
-                              final double textSpacing = _homeSlideWidth * 0.72;
-                              final int nextIndex = _wrapLevelIndex(_homeLevelIndex + 1);
-                              final int prevIndex = _wrapLevelIndex(_homeLevelIndex - 1);
-                              final bool draggingRight = _homeSlideProgress >= 0;
-                              final int incomingIndex = draggingRight
-                                  ? prevIndex
-                                  : nextIndex;
-                              final bool showIncoming = _homeSlideProgress.abs() > 0.0001;
-                              final double currentDx = _homeSlideProgress * textSpacing;
-                              final double incomingDx = draggingRight
-                                  ? currentDx - textSpacing
-                                  : currentDx + textSpacing;
-                              return Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  ClipRect(
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        if (showIncoming)
-                                          Transform.translate(
-                                            offset: Offset(incomingDx, 0),
-                                            child: _buildLevelText(
-                                              context,
-                                              GameLevel.values[incomingIndex],
-                                            ),
-                                          ),
-                                        Transform.translate(
-                                          offset: Offset(currentDx, 0),
-                                          child: _buildLevelText(
-                                            context,
-                                            GameLevel.values[_homeLevelIndex],
-                                          ),
-                                        ),
-                                      ],
+              // Logo
+              Image.asset('assets/logo-no-bg.png', width: 80, height: 80),
+
+              const SizedBox(height: 24),
+
+              Text(
+                "SELECT GAME",
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontSize: 14,
+                  letterSpacing: 2.0,
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              // Swipeable Carousel Area -- drag handler scoped to this widget only
+              Expanded(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragStart: (_) => _onHomeDragStart(),
+                  onHorizontalDragUpdate: (details) => _onHomeDragUpdate(details),
+                  onHorizontalDragEnd: (details) => _onHomeDragEnd(details, provider),
+                  child: LayoutBuilder(
+                    builder: (context, innerConstraints) {
+                      _homeSlideWidth = innerConstraints.maxWidth <= 0
+                          ? 1.0
+                          : innerConstraints.maxWidth;
+                      final double textSpacing = _homeSlideWidth * 0.72;
+                      final int nextIndex = _wrapLevelIndex(_homeLevelIndex + 1);
+                      final int prevIndex = _wrapLevelIndex(_homeLevelIndex - 1);
+                      final bool draggingRight = _homeSlideProgress >= 0;
+                      final int incomingIndex = draggingRight
+                          ? prevIndex
+                          : nextIndex;
+                      final bool showIncoming = _homeSlideProgress.abs() > 0.0001;
+                      final double currentDx = _homeSlideProgress * textSpacing;
+                      final double incomingDx = draggingRight
+                          ? currentDx - textSpacing
+                          : currentDx + textSpacing;
+                      return Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          ClipRect(
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                if (showIncoming)
+                                  Transform.translate(
+                                    offset: Offset(incomingDx, 0),
+                                    child: _buildLevelText(
+                                      context,
+                                      GameLevel.values[incomingIndex],
                                     ),
                                   ),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.arrow_left_rounded,
-                                          size: 40,
-                                          color: AppTheme.darkText,
-                                        ),
-                                        onPressed: () => _animateHomeStep(provider, -1),
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.arrow_right_rounded,
-                                          size: 40,
-                                          color: AppTheme.darkText,
-                                        ),
-                                        onPressed: () => _animateHomeStep(provider, 1),
-                                      ),
-                                    ],
+                                Transform.translate(
+                                  offset: Offset(currentDx, 0),
+                                  child: _buildLevelText(
+                                    context,
+                                    GameLevel.values[_homeLevelIndex],
                                   ),
-                                ],
-                              );
-                            },
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              GestureDetector(
+                                onTap: () => _animateHomeStep(provider, -1),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8),
+                                  child: Icon(
+                                    Icons.arrow_left_rounded,
+                                    size: 40,
+                                    color: AppTheme.darkText,
+                                  ),
+                                ),
+                              ),
+                              GestureDetector(
+                                onTap: () => _animateHomeStep(provider, 1),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(8),
+                                  child: Icon(
+                                    Icons.arrow_right_rounded,
+                                    size: 40,
+                                    color: AppTheme.darkText,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+
+              const Spacer(),
+
+              // Start Button -- OUTSIDE the drag GestureDetector so taps always work
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: GestureDetector(
+                  onTap: provider.startGame,
+                  child: Text(
+                    "START",
+                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                      color: AppTheme.darkText.withValues(alpha: 0.6),
                     ),
                   ),
-
-                  const Spacer(flex: 2),
-
-                  // Start Button -- OUTSIDE the drag GestureDetector so taps always work
-                  Padding(
-                    padding: EdgeInsets.only(bottom: h * 0.05),
-                    child: _TextButton(text: "START", onTap: provider.startGame),
-                  ),
-                ],
+                ),
               ),
-            );
-          },
+            ],
+          ),
         ),
       ),
     );
